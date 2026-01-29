@@ -24,7 +24,21 @@ const TopicSchema = new mongoose.Schema({
     slug: { type: String, required: true, unique: true },
     description: { type: String },
     subheadings: [SubheadingSchema],
-    order: { type: Number, default: 0 }
+    order: { type: Number, default: 0 },
+    // Ownership and Privacy Fields
+    owner: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+    },
+    isPublic: {
+        type: Boolean,
+        default: false
+    },
+    sharedWith: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }]
 }, { timestamps: true });
 
 module.exports = mongoose.model('Topic', TopicSchema);

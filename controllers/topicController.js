@@ -1,9 +1,27 @@
 const Topic = require('../models/Topic');
 
 // Get all topics (for sidebar)
+// Returns user's own topics + public topics from others
 exports.getTopics = async (req, res) => {
     try {
-        const topics = await Topic.find().sort({ order: 1 });
+        let query = {};
+
+        // If user is authenticated, show their topics + public topics
+        if (req.user) {
+            query = {
+                $or: [
+                    { owner: req.user._id }, // User's own topics
+                    { isPublic: true } // Public topics from others
+                ]
+            };
+        } else {
+            // If not authenticated, only show public topics
+            query = { isPublic: true };
+        }
+
+        const topics = await Topic.find(query)
+            .populate('owner', 'name email avatar')
+            .sort({ order: 1 });
         res.json(topics);
     } catch (err) {
         res.status(500).json({ message: err.message });
@@ -12,14 +30,20 @@ exports.getTopics = async (req, res) => {
 
 // Create a new Main Topic
 exports.createTopic = async (req, res) => {
-    const { title, slug, description } = req.body;
+    const { title, slug, description, isPublic } = req.body;
     try {
-        const newTopic = new Topic({ title, slug, description });
+        const newTopic = new Topic({
+            title,
+            slug,
+            description,
+            owner: req.user._id, // Set owner to current user
+            isPublic: isPublic || false
+        });
         await newTopic.save();
 
-        // Emit event
+        // Emit event to update sidebar for all users
         const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
+        io.emit('topics_updated');
 
         res.status(201).json(newTopic);
     } catch (err) {
@@ -137,12 +161,19 @@ exports.updateSecondaryHeading = async (req, res) => {
 exports.deleteTopic = async (req, res) => {
     try {
         const { topicId } = req.params;
-        const topic = await Topic.findByIdAndDelete(topicId);
+        const topic = await Topic.findById(topicId);
 
         if (!topic) return res.status(404).json({ message: 'Topic not found' });
 
+        // Check ownership (SuperAdmin or owner)
+        if (req.user.role !== 'SuperAdmin' && topic.owner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Not authorized to delete this topic' });
+        }
+
+        await Topic.findByIdAndDelete(topicId);
+
         const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
+        io.emit('topics_updated');
 
         res.json({ message: 'Topic deleted successfully' });
     } catch (err) {
