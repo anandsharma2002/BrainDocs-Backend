@@ -1,194 +1,134 @@
 const Topic = require('../models/Topic');
 
-// Get all topics (for sidebar)
-exports.getTopics = async (req, res) => {
+// @desc    Get all topics (Public + Created by User)
+// @route   GET /api/v1/topics
+// @access  Private
+exports.getTopics = async (req, res, next) => {
     try {
-        const topics = await Topic.find().sort({ order: 1 });
-        res.json(topics);
+        const query = {
+            $or: [
+                { isPublic: true },
+                { createdBy: req.user.id }
+            ]
+        };
+
+        const topics = await Topic.find(query).populate({
+            path: 'headings',
+            populate: {
+                path: 'subHeadings'
+            }
+        });
+
+        res.status(200).json({
+            success: true,
+            count: topics.length,
+            data: topics
+        });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        res.status(400).json({ success: false, message: err.message });
     }
 };
 
-// Create a new Main Topic
-exports.createTopic = async (req, res) => {
-    const { title, slug, description } = req.body;
+// @desc    Get single topic
+// @route   GET /api/v1/topics/:id
+// @access  Private
+exports.getTopic = async (req, res, next) => {
     try {
-        const newTopic = new Topic({ title, slug, description });
-        await newTopic.save();
+        const topic = await Topic.findById(req.params.id);
 
-        // Emit event
-        const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
-
-        res.status(201).json(newTopic);
-    } catch (err) {
-        res.status(400).json({ message: err.message });
-    }
-};
-
-// Add Subheading to Topic
-exports.addSubheading = async (req, res) => {
-    const { topicId } = req.params;
-    const { title, slug, content, description, titleLevel } = req.body;
-
-    try {
-        const topic = await Topic.findById(topicId);
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
-
-        topic.subheadings.push({ title, slug, content, description, titleLevel });
-        await topic.save();
-
-        const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
-
-        res.json(topic);
-    } catch (err) {
-        res.status(400).json({ message: err.message });
-    }
-};
-
-// Add Secondary Heading to Subheading
-exports.addSecondaryHeading = async (req, res) => {
-    const { topicId, subheadingId } = req.params;
-    const { title, slug, content } = req.body;
-
-    try {
-        const topic = await Topic.findById(topicId);
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
-
-        const subheading = topic.subheadings.id(subheadingId);
-        if (!subheading) return res.status(404).json({ message: 'Subheading not found' });
-
-        subheading.secondaryHeadings.push({ title, slug, content });
-        await topic.save();
-
-        const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
-
-        res.json(topic);
-    } catch (err) {
-        res.status(400).json({ message: err.message });
-    }
-};
-
-// Update Subheading Content
-// Update Subheading Content
-exports.updateSubheading = async (req, res) => {
-    const { topicId, subheadingId } = req.params;
-    const { content, title, slug, description, titleLevel } = req.body;
-
-    try {
-        const topic = await Topic.findById(topicId);
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
-
-        const subheading = topic.subheadings.id(subheadingId);
-        if (!subheading) return res.status(404).json({ message: 'Subheading not found' });
-
-        if (content !== undefined) subheading.content = content;
-        if (title !== undefined) subheading.title = title;
-        if (slug !== undefined) subheading.slug = slug;
-        if (description !== undefined) subheading.description = description;
-        if (titleLevel !== undefined) subheading.titleLevel = titleLevel;
-
-        await topic.save();
-
-        const io = req.app.get('io');
-        // Emit update if structure (title/slug) changed, otherwise just save
-        if (title || slug) {
-            io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
+        if (!topic) {
+            return res.status(404).json({ success: false, message: 'Topic not found' });
         }
 
-        res.json(topic);
+        res.status(200).json({
+            success: true,
+            data: topic
+        });
     } catch (err) {
-        res.status(400).json({ message: err.message });
+        res.status(400).json({ success: false, message: err.message });
     }
 };
 
-// Update Secondary Heading Content
-exports.updateSecondaryHeading = async (req, res) => {
-    const { topicId, subheadingId, secondaryId } = req.params;
-    const { content, title, slug, description, titleLevel } = req.body;
-
+// @desc    Create new topic
+// @route   POST /api/v1/topics
+// @access  Private
+exports.createTopic = async (req, res, next) => {
     try {
-        const topic = await Topic.findById(topicId);
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
+        // Add user to req.body
+        req.body.createdBy = req.user.id;
 
-        const subheading = topic.subheadings.id(subheadingId);
-        if (!subheading) return res.status(404).json({ message: 'Subheading not found' });
+        // Check for published topic restriction (Only SuperAdmin can create public topics)
+        if (req.body.isPublic && req.user.role !== 'SuperAdmin') {
+            return res.status(401).json({ success: false, message: 'Not authorized to create public topics' });
+        }
 
-        const secondary = subheading.secondaryHeadings.id(secondaryId);
-        if (!secondary) return res.status(404).json({ message: 'Secondary Heading not found' });
+        const topic = await Topic.create(req.body);
 
-        if (content !== undefined) secondary.content = content;
-        if (title !== undefined) secondary.title = title;
-        if (slug !== undefined) secondary.slug = slug;
-        if (description !== undefined) secondary.description = description;
-        if (titleLevel !== undefined) secondary.titleLevel = titleLevel;
-
-        await topic.save();
-        res.json(topic);
+        res.status(201).json({
+            success: true,
+            data: topic
+        });
     } catch (err) {
-        res.status(400).json({ message: err.message });
+        if (err.code === 11000) {
+            return res.status(400).json({ success: false, message: 'Topic with this title already exists' });
+        }
+        res.status(400).json({ success: false, message: err.message });
     }
 };
 
-// Delete Main Topic
-exports.deleteTopic = async (req, res) => {
+// @desc    Update topic
+// @route   PUT /api/v1/topics/:id
+// @access  Private
+exports.updateTopic = async (req, res, next) => {
     try {
-        const { topicId } = req.params;
-        const topic = await Topic.findByIdAndDelete(topicId);
+        let topic = await Topic.findById(req.params.id);
 
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
+        if (!topic) {
+            return res.status(404).json({ success: false, message: 'Topic not found' });
+        }
 
-        const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
+        // Make sure user is topic owner or SuperAdmin
+        if (topic.createdBy.toString() !== req.user.id && req.user.role !== 'SuperAdmin') {
+            return res.status(401).json({ success: false, message: 'Not authorized to update this topic' });
+        }
 
-        res.json({ message: 'Topic deleted successfully' });
+        topic = await Topic.findByIdAndUpdate(req.params.id, req.body, {
+            new: true,
+            runValidators: true
+        });
+
+        res.status(200).json({
+            success: true,
+            data: topic
+        });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        res.status(400).json({ success: false, message: err.message });
     }
 };
 
-// Delete Subheading
-exports.deleteSubheading = async (req, res) => {
+// @desc    Delete topic
+// @route   DELETE /api/v1/topics/:id
+// @access  Private
+exports.deleteTopic = async (req, res, next) => {
     try {
-        const { topicId, subheadingId } = req.params;
-        const topic = await Topic.findById(topicId);
+        const topic = await Topic.findById(req.params.id);
 
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
+        if (!topic) {
+            return res.status(404).json({ success: false, message: 'Topic not found' });
+        }
 
-        topic.subheadings.pull({ _id: subheadingId });
-        await topic.save();
+        // Make sure user is topic owner or SuperAdmin
+        if (topic.createdBy.toString() !== req.user.id && req.user.role !== 'SuperAdmin') {
+            return res.status(401).json({ success: false, message: 'Not authorized to delete this topic' });
+        }
 
-        const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
+        await topic.deleteOne(); // Trigger cascade delete
 
-        res.json(topic);
+        res.status(200).json({
+            success: true,
+            data: {}
+        });
     } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
-};
-
-// Delete Secondary Heading
-exports.deleteSecondaryHeading = async (req, res) => {
-    try {
-        const { topicId, subheadingId, secondaryId } = req.params;
-        const topic = await Topic.findById(topicId);
-
-        if (!topic) return res.status(404).json({ message: 'Topic not found' });
-
-        const subheading = topic.subheadings.id(subheadingId);
-        if (!subheading) return res.status(404).json({ message: 'Subheading not found' });
-
-        subheading.secondaryHeadings.pull({ _id: secondaryId });
-        await topic.save();
-
-        const io = req.app.get('io');
-        io.emit('topics_updated', await Topic.find().sort({ order: 1 }));
-
-        res.json(topic);
-    } catch (err) {
-        res.status(500).json({ message: err.message });
+        res.status(400).json({ success: false, message: err.message });
     }
 };
