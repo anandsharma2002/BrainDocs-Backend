@@ -14,7 +14,7 @@ const PageContentSchema = new mongoose.Schema({
     blocks: [{
         type: {
             type: String,
-            enum: ['paragraph', 'code', 'image', 'video', 'heading', 'table'],
+            enum: ['paragraph', 'code', 'image', 'video', 'heading', 'table', 'links'],
             required: true
         },
         content: {
